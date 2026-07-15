@@ -10,17 +10,29 @@ from manifold3d import Manifold, CrossSection, JoinType, set_circular_segments
 set_circular_segments(64)
 
 # ---------------- 参数 (单位 mm) ----------------
-# 屏幕 1.8" ST7735
-SCR_VIEW_W, SCR_VIEW_H = 36.5, 29.5     # 可视区开窗
-SCR_PCB_W, SCR_PCB_H = 58.0, 35.0       # 模块 PCB, 按实物量!
+# 屏幕 1.8" ST7735 蓝板 (实测: PCB 56x34, 白框 44x34, 显示区 38x32)
+SCR_VIEW_W, SCR_VIEW_H = 38.5, 32.5     # 开窗 = 显示区 + 0.5 余量
+SCR_PCB_W, SCR_PCB_H = 56.0, 34.0       # 模块 PCB (实测)
+# 显示区中心相对 PCB 中心的偏移 (实测):
+# 白框 44 靠玻璃侧, 玻璃侧留边 5.2 / 排针侧留边 0.8
+# => 显示区中心在白框中心 +2.2 (偏排针侧), 白框中心在 PCB 中心 -6
+# => 相对 PCB 中心 = -6 + 2.2 = -3.8
+SCR_ACT_OFF_X = -3.8
 SCR_Y_OFF = 4.0                          # 屏窗上移
+SCR_PIN_SIDE_OPEN = True                 # 定位框排针侧开口 (已焊排针+飞线)
 
 WALL = 2.4
 BODY_W, BODY_H, BODY_D = 74.0, 64.0, 30.0
 CORNER = 8.0                             # 大圆角, 更像机器人头
 
 LIP_D, LIP_CLEAR = 5.0, 0.28
-USB_W, USB_H, USB_Z = 13.0, 8.0, 10.0    # micro-USB 槽
+
+# 合宙 Core-ESP32C3 V1639 LuatOS (飞线直焊, 元件面朝后盖贴内侧, USB-C 朝侧面缺口)
+ESP_L, ESP_W = 51.0, 21.0     # 板长x宽 (实测)
+BTN_FROM_USB = 17.5            # USB 端边缘 -> 按钮中心 (实测: 边缘 15/20 取中)
+BTN_GAP = 11.8                 # BOOT/RST 两按钮中心距 (实测)
+BTN_HOLE_D = 5.2               # 后盖按钮孔径
+USB_NOTCH_W, USB_NOTCH_H = 11.0, 8.0   # 侧面 USB-C 出线缺口 (宽x高)
 
 ANT_HOLE_D, ANT_STEM_D = 6.0, 5.6        # 天线孔/杆
 ANT_STEM_H, ANT_BALL_D = 16.0, 11.0
@@ -57,9 +69,16 @@ def make_body():
     body = body - win - bevel
 
     # 屏幕定位框 (前脸内侧)
+    # 开窗以显示区为准居中于前脸, PCB 中心相应偏移 -SCR_ACT_OFF_X
+    pcb_cx = -SCR_ACT_OFF_X
     fo = Manifold.cube((SCR_PCB_W + 3.6, SCR_PCB_H + 3.6, 3.0), True)
     fi = Manifold.cube((SCR_PCB_W + 0.6, SCR_PCB_H + 0.6, 4.0), True)
-    frame = (fo - fi).translate((0, SCR_Y_OFF, WALL + 1.5))
+    frame = (fo - fi).translate((pcb_cx, SCR_Y_OFF, WALL + 1.5))
+    if SCR_PIN_SIDE_OPEN:
+        # 排针侧 (+x) 开口: 已焊排针和飞线从这里出
+        cut = Manifold.cube((9, SCR_PCB_H + 9, 7), True).translate(
+            (pcb_cx + SCR_PCB_W / 2 + 1.5, SCR_Y_OFF, WALL + 1.5))
+        frame = frame - cut
     body = body + frame
 
     # 天线安装: 顶壁内侧加持握凸台 (d10 x 12), 再打通孔 (d6)
@@ -68,6 +87,11 @@ def make_body():
     hole = Manifold.cylinder(WALL + 12.5, ANT_HOLE_D / 2).rotate((90, 0, 0)).translate(
         (0, BODY_H / 2 + 0.01, BODY_D / 2))
     body = body + boss - hole
+
+    # 右侧壁后缘 USB-C 出线缺口 (开到后端面, 后盖装上即封闭成方孔)
+    notch = Manifold.cube((WALL + 2, USB_NOTCH_H, USB_NOTCH_W + 1), True).translate(
+        (BODY_W / 2 - WALL / 2, 0, BODY_D - USB_NOTCH_W / 2 + 0.5))
+    body = body - notch
     return body
 
 
@@ -80,23 +104,38 @@ def make_back():
     lip = (lip_o - lip_i.translate((0, 0, -0.5))).translate((0, 0, WALL))
     back = panel + lip
 
-    # micro-USB 槽 (底部)
-    usb = Manifold.cube((USB_W, USB_H, WALL + LIP_D + 2), True).translate(
-        (0, -BODY_H / 2 + USB_Z, (WALL + LIP_D) / 2))
-    back = back - usb
+    # 合宙 C3 板贴后盖内侧 (元件面朝后盖), USB-C 朝 -x 缺口方向
+    # 板 USB 端边缘位置:
+    usb_edge_x = -(BODY_W / 2 - WALL - 1)
+    # BOOT/RST 按钮孔 (一对, 沿 y 对称)
+    for dy in (-BTN_GAP / 2, BTN_GAP / 2):
+        h = Manifold.cylinder(WALL + 2, BTN_HOLE_D / 2).translate(
+            (usb_edge_x + BTN_FROM_USB, dy, -1))
+        back = back - h
+    # 后盖唇 -x 侧对应 USB 缺口 (与主壳侧缺口拼合)
+    lipn = Manifold.cube((2 * WALL + 3, USB_NOTCH_H, LIP_D + 2), True).translate(
+        (-(BODY_W / 2 - WALL), 0, WALL + LIP_D / 2))
+    back = back - lipn
 
-    # 蜂鸣器出音孔 3x3 (右上)
+    # 蜂鸣器出音孔 3x3 (右上, 避开板区)
     for dx in (-5, 0, 5):
         for dy in (-5, 0, 5):
             h = Manifold.cylinder(WALL + 2, 1.2).translate(
                 (BODY_W / 2 - 16 + dx, BODY_H / 2 - 16 + dy, -1))
             back = back - h
 
-    # 散热缝 (左中)
-    for i in range(4):
-        slot = rbox(22, 2.4, WALL + 2, 1.2).translate((-BODY_W / 2 + 25, -8 + i * 7, -1))
+    # 散热缝 (下方, 避开板区)
+    for i in range(3):
+        slot = rbox(22, 2.4, WALL + 2, 1.2).translate((-BODY_W / 2 + 25, -25 + i * 5.5, -1))
         back = back - slot
     return back
+
+
+def make_plunger():
+    """按钮顶杆 x2: 蘑菇头朝内顶住板载按钮, 杆穿出后盖孔"""
+    head = Manifold.cylinder(1.4, 3.6)
+    stem = Manifold.cylinder(4.6, (BTN_HOLE_D - 0.6) / 2).translate((0, 0, 1.4))
+    return head + stem
 
 
 def make_antenna():
@@ -143,3 +182,4 @@ if __name__ == "__main__":
     export(make_back(), "back.stl")
     export(make_antenna(), "antenna.stl")
     export(make_stand(), "stand.stl")
+    export(make_plunger(), "button_plunger_x2.stl")

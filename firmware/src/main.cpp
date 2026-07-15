@@ -50,8 +50,8 @@ bool firstPollDone = false;
 #define C_HEADER    0x39C7                       // 深灰
 #define C_TEXT      0xEF7D                       // 近白
 #define C_DIM       0x8410                       // 中灰
-#define C_CLAUDE    0xFC65                       // Claude 橙 (#D97757 近似)
-#define C_CODEX     0x5E99                       // Codex 青绿
+#define C_CLAUDE    0xD3AB                       // Claude 品牌橙红 #D97757 精确转换
+#define C_CODEX     0xFFFF                       // Codex 白
 #define C_BAR_BG    0x2124                       // bar 底槽
 #define C_WARN      0xFDA0                       // 黄
 #define C_DANGER    0xF9E7                       // 红

@@ -48,10 +48,10 @@ pio device monitor       # 看日志 (115200)
 
 ### ST7735 变体调试(几乎必经步骤)
 
-1.8" ST7735 有红标/绿标/黑标多种批次。若画面偏移、镜像或颜色不对,改 `platformio.ini`:
+1.8" ST7735 有红标/绿标/黑标多种批次。本项目实测的蓝板 (丝印 1.8'TFT128*RGB*160) 为 **REDTAB + TFT_RGB**,已设为默认。其他批次若画面异常,改 `platformio.ini`:
 
-- 偏移/花屏 → 把 `ST7735_GREENTAB` 依次换成 `ST7735_REDTAB` / `ST7735_BLACKTAB` / `ST7735_GREENTAB2` / `ST7735_GREENTAB3`
-- 蓝橙互换 → `TFT_RGB_ORDER` 在 `TFT_BGR` / `TFT_RGB` 之间切换
+- 偏移/花屏 → 把 `ST7735_REDTAB` 依次换成 `ST7735_BLACKTAB` / `ST7735_GREENTAB` / `ST7735_GREENTAB2` / `ST7735_GREENTAB3`
+- 蓝橙互换 → `TFT_RGB_ORDER` 在 `TFT_RGB` / `TFT_BGR` 之间切换
 - 方向反了 → `main.cpp` 里 `tft.setRotation(3)` 改成 `1`
 
 ## 3. 获取凭据
@@ -92,12 +92,15 @@ python tools/get_tokens.py
 
 用**橙色 PLA**打印(Claude 品牌色约 #D97757),效果图见 `case/assembly_preview.png`。
 
-- `body.stl` — 机器人头主壳(74×64×30, 大圆角):前脸朝下打印,免支撑;顶部有天线插孔
+适配硬件:1.8" TFT128×RGB×160 蓝板屏 + **合宙 Core-ESP32C3** + 三针立式有源蜂鸣器模块,飞线直焊。
+
+- `body.stl` — 机器人头主壳(74×64×30, 大圆角):前脸朝下打印,免支撑;顶部天线插孔,右侧壁后缘 USB-C 出线缺口
 - `antenna.stl` — 球头天线:竖直打印,杆 φ5.6 插入 φ6 孔,过松点胶
-- `back.stl` — 后盖:平放,含 micro-USB 槽、蜂鸣孔、散热缝
+- `back.stl` — 后盖:平放打印;含 **BOOT/RST 两个按钮孔**、蜂鸣孔、散热缝、唇部 USB 缺口
+- `button_plunger_x2.stl` — 按钮顶杆,打印 2 个:蘑菇头朝内放入孔中,再贴板,即可从壳外按 BOOT/RST
 - `stand.stl` — 12° 仰角底座,带两只小脚趾
-- 参数化源文件 `quota_tv_case.scad` / `gen_case.py`:**打印前先量你的屏幕模块 PCB 实际尺寸**,改 `scr_pcb_w/h` 后重新导出更稳(各家 1.8" 模块 PCB 尺寸不一)
-- 装配:屏幕贴入前脸内侧定位框(双面胶/热熔胶)→ DevKitM-1 平放壳底、USB 口对准后盖槽 → 蜂鸣器贴后盖出音孔附近 → 杜邦线连好后插上后盖 → 插天线 → 卡入底座
+- 装配:屏幕贴入前脸内侧定位框 → 顶杆入孔 → **合宙板元件面朝后盖**、USB-C 对准 -x 缺口方向,按钮对准顶杆后用双面胶/热熔胶贴在后盖内侧 → 蜂鸣器贴出音孔附近 → 飞线焊好插上后盖 → 插天线 → 卡入底座
+- 源文件 `gen_case.py`(STL 以它为准):打印前量三个尺寸并改参数重新生成——屏模块 PCB 宽高(`SCR_PCB_W/H`)、合宙板 USB 端边缘到按钮中心距(`BTN_FROM_USB`)、两按钮中心距(`BTN_GAP`)
 
 ## 8. 安全提醒
 
