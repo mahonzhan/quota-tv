@@ -26,7 +26,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +63,21 @@ var pushIntervalSecs int64 // main 里根据 -interval 赋值
 
 // ---------- Claude: 最小探测请求, 读响应头 ----------
 
+func parseClaudeCred(raw []byte) (string, error) {
+	var cred struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(raw, &cred); err != nil || cred.ClaudeAiOauth.AccessToken == "" {
+		return "", fmt.Errorf("解析 Claude 凭据 JSON 失败")
+	}
+	return cred.ClaudeAiOauth.AccessToken, nil
+}
+
+// 查找顺序: 环境变量 > ~/.claude/.credentials.json (Linux/Windows)
+//
+//	> macOS 钥匙串 (Claude Code 在 mac 上存钥匙串, 无文件)
 func claudeToken() (string, error) {
 	if t := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); t != "" {
 		return t, nil
@@ -70,19 +87,18 @@ func claudeToken() (string, error) {
 	if dir == "" {
 		dir = filepath.Join(home, ".claude")
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, ".credentials.json"))
-	if err != nil {
-		return "", fmt.Errorf("未找到 Claude 凭据 (%v); 可运行 `claude setup-token` 并设置环境变量 CLAUDE_CODE_OAUTH_TOKEN", err)
+	if raw, err := os.ReadFile(filepath.Join(dir, ".credentials.json")); err == nil {
+		return parseClaudeCred(raw)
 	}
-	var cred struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
+	if runtime.GOOS == "darwin" {
+		// 首次访问会弹钥匙串授权框, 选"始终允许"
+		out, err := exec.Command("security", "find-generic-password",
+			"-s", "Claude Code-credentials", "-w").Output()
+		if err == nil && len(bytes.TrimSpace(out)) > 0 {
+			return parseClaudeCred(bytes.TrimSpace(out))
+		}
 	}
-	if err := json.Unmarshal(raw, &cred); err != nil || cred.ClaudeAiOauth.AccessToken == "" {
-		return "", fmt.Errorf("解析 .credentials.json 失败")
-	}
-	return cred.ClaudeAiOauth.AccessToken, nil
+	return "", fmt.Errorf("未找到 Claude 凭据; 可运行 `claude setup-token` 并设置环境变量 CLAUDE_CODE_OAUTH_TOKEN")
 }
 
 func fetchClaude() (*providerPush, error) {
@@ -403,7 +419,7 @@ func main() {
 		for range time.Tick(*interval) {
 			cycle(targets)
 		}
-			return
+		return
 	}
 	runTray(targets, *interval) // 默认: 托盘常驻
 }

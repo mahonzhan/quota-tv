@@ -54,8 +54,8 @@ func trayReady(targets []string, interval time.Duration) {
 			gs, gw = frame.Codex.Session, frame.Codex.Weekly
 		}
 		if runtime.GOOS == "darwin" {
-			// macOS: 菜单栏原生文字标题, 显示 5h/7d 已用%
-			systray.SetTitle(fmt.Sprintf("C%s/%s G%s/%s",
+			// macOS: 菜单栏原生文字标题, CL=Claude CX=Codex, 数值为 5h/7d 已用%
+			systray.SetTitle(fmt.Sprintf("CL %s/%s · CX %s/%s",
 				pctStr(cs), pctStr(cw), pctStr(gs), pctStr(gw)))
 		} else {
 			// Windows/Linux: 数字画进图标 (上橙 Claude 5h, 下白 Codex 5h)

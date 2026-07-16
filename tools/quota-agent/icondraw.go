@@ -60,7 +60,7 @@ func drawText(img *image.RGBA, s string, y int, c color.RGBA) {
 // 渲染双行数字图标, 返回 PNG 字节
 func renderNumberPNG(top, bottom string) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, iconSize, iconSize))
-	drawText(img, top, 4, color.RGBA{217, 119, 87, 255})    // Claude 橙
+	drawText(img, top, 4, color.RGBA{217, 119, 87, 255})      // Claude 橙
 	drawText(img, bottom, 18, color.RGBA{255, 255, 255, 255}) // Codex 白
 	var buf bytes.Buffer
 	png.Encode(&buf, img)
@@ -70,13 +70,13 @@ func renderNumberPNG(top, bottom string) []byte {
 // PNG 包一层 ICO 容器 (Vista+ 原生支持 PNG-in-ICO), Windows SetIcon 用
 func pngToICO(p []byte) []byte {
 	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, uint16(0)) // reserved
-	binary.Write(&buf, binary.LittleEndian, uint16(1)) // type: icon
-	binary.Write(&buf, binary.LittleEndian, uint16(1)) // count
-	buf.WriteByte(iconSize)                            // width
-	buf.WriteByte(iconSize)                            // height
-	buf.WriteByte(0)                                   // palette
-	buf.WriteByte(0)                                   // reserved
+	binary.Write(&buf, binary.LittleEndian, uint16(0))      // reserved
+	binary.Write(&buf, binary.LittleEndian, uint16(1))      // type: icon
+	binary.Write(&buf, binary.LittleEndian, uint16(1))      // count
+	buf.WriteByte(iconSize)                                 // width
+	buf.WriteByte(iconSize)                                 // height
+	buf.WriteByte(0)                                        // palette
+	buf.WriteByte(0)                                        // reserved
 	binary.Write(&buf, binary.LittleEndian, uint16(1))      // planes
 	binary.Write(&buf, binary.LittleEndian, uint16(32))     // bpp
 	binary.Write(&buf, binary.LittleEndian, uint32(len(p))) // data size
