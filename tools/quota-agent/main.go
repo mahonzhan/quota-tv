@@ -52,9 +52,12 @@ type providerPush struct {
 }
 
 type pushFrame struct {
-	Claude *providerPush `json:"claude,omitempty"`
-	Codex  *providerPush `json:"codex,omitempty"`
+	Claude   *providerPush `json:"claude,omitempty"`
+	Codex    *providerPush `json:"codex,omitempty"`
+	Interval int64         `json:"interval,omitempty"` // 推送间隔(秒), 设备据此算 stale 阈值
 }
+
+var pushIntervalSecs int64 // main 里根据 -interval 赋值
 
 // ---------- Claude: 最小探测请求, 读响应头 ----------
 
@@ -245,31 +248,43 @@ func push(device string, frame pushFrame) error {
 }
 
 // 拉取一次数据, 推送到所有目标 (多设备只探测一次, 不重复消耗)
-func cycle(targets []string) {
-	frame := pushFrame{}
+// 返回一行状态摘要, 供托盘菜单显示
+func cycle(targets []string) string {
+	frame := pushFrame{Interval: pushIntervalSecs}
+	var status string
 	if p, err := fetchClaude(); err != nil {
 		log.Printf("[claude] %v", err)
+		status = "Claude ERR"
 	} else {
 		frame.Claude = p
 		log.Printf("[claude] 5h=%.1f%% 7d=%.1f%%", deref(p.Session), deref(p.Weekly))
+		status = fmt.Sprintf("Claude %.0f/%.0f%%", deref(p.Session), deref(p.Weekly))
 	}
 	if p, err := fetchCodex(); err != nil {
 		log.Printf("[codex ] %v", err)
+		status += " · Codex ERR"
 	} else {
 		frame.Codex = p
 		log.Printf("[codex ] 5h=%.1f%% 7d=%.1f%%", deref(p.Session), deref(p.Weekly))
+		status += fmt.Sprintf(" · Codex %.0f/%.0f%%", deref(p.Session), deref(p.Weekly))
 	}
 	if frame.Claude == nil && frame.Codex == nil {
 		log.Printf("[push  ] 无数据, 跳过")
-		return
+		return status + " (未推送)"
 	}
+	pushOK := true
 	for _, t := range targets {
 		if err := push(t, frame); err != nil {
 			log.Printf("[push  ] %s: %v", t, err)
+			pushOK = false
 		} else {
 			log.Printf("[push  ] ok -> %s", t)
 		}
 	}
+	if !pushOK {
+		status += " (推送失败)"
+	}
+	return status
 }
 
 func deref(f *float64) float64 {
@@ -351,17 +366,24 @@ func main() {
 	name := flag.String("name", "", "多设备时指定设备名 (如 quotatv-a1b2)")
 	all := flag.Bool("all", false, "推送到发现的所有设备")
 	interval := flag.Duration("interval", 120*time.Second, "轮询间隔")
-	once := flag.Bool("once", false, "只执行一次")
+	once := flag.Bool("once", false, "只执行一次后退出")
+	nogui := flag.Bool("nogui", false, "不驻留托盘, 纯命令行运行 (服务器/systemd 用)")
 	flag.Parse()
 
+	pushIntervalSecs = int64(interval.Seconds())
 	targets := resolveTargets(*device, *name, *all)
 	log.Printf("quota-agent 启动: targets=%v interval=%s", targets, *interval)
 
-	cycle(targets)
 	if *once {
+		cycle(targets)
 		return
 	}
-	for range time.Tick(*interval) {
+	if *nogui {
 		cycle(targets)
+		for range time.Tick(*interval) {
+			cycle(targets)
+		}
+		return
 	}
+	runTray(targets, *interval) // 默认: 托盘常驻
 }

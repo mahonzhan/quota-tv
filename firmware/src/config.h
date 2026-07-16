@@ -9,7 +9,9 @@
 // ================= 轮询 =================
 #define POLL_INTERVAL_MS      (120UL * 1000UL)  // 每 2 分钟刷新一次额度
 #define HTTP_TIMEOUT_MS       15000
-#define STALE_AFTER_MS        (15UL * 60UL * 1000UL) // 超过 15 分钟没有成功数据视为过期
+// 超过 3 个轮询周期没有成功数据 → 标记 stale (进度条变灰)
+// agent 模式下若推送帧带 interval 字段, 以 3x 该值动态覆盖
+#define STALE_AFTER_MS        (3UL * POLL_INTERVAL_MS)
 
 // ================= Claude =================
 // 通过发送 max_tokens=1 的最小请求, 从响应头读取额度利用率:

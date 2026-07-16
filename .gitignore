@@ -13,3 +13,4 @@ case/preview2.png
 # 凭据 — 永远不要提交!
 *.credentials.json
 auth.json
+*.exe

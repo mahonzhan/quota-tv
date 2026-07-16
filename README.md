@@ -90,24 +90,32 @@ python tools/get_tokens.py
 2. mDNS 兜底:每台设备注册 `quotatv-xxxx.local`
 3. 手动指定:`-device http://192.168.x.x`(AP 隔离等广播不通的网络用这个)
 
-### Agent 编译与运行
+### Agent 获取与运行
+
+**推荐**:直接从 [Releases](https://github.com/mahonzhan/quota-tv/releases) 下载对应平台的 quota-agent(打 tag 后由 GitHub Actions 自动构建:Windows amd64 / macOS arm64+amd64 / Linux amd64)。
+
+双击(或命令行)运行后**驻留系统托盘**(Windows 任务栏 / macOS 菜单栏 / Linux 状态区),托盘菜单提供:最近推送状态、立即推送、**开机自启开关**(写入各平台原生自启机制:注册表 Run / LaunchAgent / autostart desktop)、退出。
+
+命令行参数(托盘模式同样生效):
 
 ```bash
-cd tools/quota-agent
-go build -ldflags "-s -w" -o quota-agent        # 本平台
-GOOS=windows GOARCH=amd64 go build -o quota-agent.exe   # 交叉编译其他平台
-GOOS=darwin  GOARCH=arm64 go build -o quota-agent-mac
-GOOS=linux   GOARCH=amd64 go build -o quota-agent-linux
-
-./quota-agent -once      # 调试: 发现设备并推一次
-./quota-agent            # 常驻: 每 2 分钟推一次
+quota-agent                  # 托盘常驻, 自动发现设备, 每 2 分钟推送
+quota-agent -once            # 调试: 发现设备并推一次后退出
+quota-agent -nogui           # 无托盘纯命令行 (服务器/systemd 场景)
+quota-agent -name quotatv-a1b2   # 多设备时指定
+quota-agent -all             # 多设备全部推送
+quota-agent -device http://192.168.1.50   # 广播不通时手动指定
 ```
 
-开机自启:
+自己编译:`cd tools/quota-agent && go build -ldflags "-s -w"`(Windows 加 `-H windowsgui` 免黑窗;macOS 需在 mac 上编译,systray 依赖 cgo)。
 
-- **Windows**: `schtasks /create /tn QuotaAgent /sc onlogon /tr "C:\path\quota-agent.exe"`
-- **macOS**: `launchd` 用户 LaunchAgent(`~/Library/LaunchAgents/`,RunAtLoad + KeepAlive)
-- **Linux**: systemd user unit(`~/.config/systemd/user/quota-agent.service`,`ExecStart=... Restart=always`,`systemctl --user enable --now quota-agent`)
+### 发布流程 (维护者)
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+`.github/workflows/release.yml` 会在三平台 runner 上构建 4 个二进制并自动创建 GitHub Release。
 
 ## 6. 数据来源(与风险)
 

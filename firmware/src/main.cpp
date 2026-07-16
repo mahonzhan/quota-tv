@@ -39,11 +39,13 @@ struct WindowData {
   float  usedPct    = -1;          // 0~100, <0 = 无数据
   time_t resetAt    = 0;           // unix epoch, 0 = 未知
 };
+uint32_t staleAfterMs = STALE_AFTER_MS;   // agent 模式下由推送帧 interval 动态覆盖
 struct ProviderData {
   WindowData session, weekly;      // 5h / 7d
   uint32_t lastOkMs   = 0;
   String   lastErr;
-  bool fresh() const { return lastOkMs && (millis() - lastOkMs) < STALE_AFTER_MS; }
+  bool fresh() const { return lastOkMs && (millis() - lastOkMs) < staleAfterMs; }
+  uint32_t ageMin() const { return lastOkMs ? (millis() - lastOkMs) / 60000UL : 0; }
 };
 ProviderData claudeData, codexData;
 
@@ -309,8 +311,8 @@ static void drawBarRow(int y, const char* label, const WindowData& w, uint16_t a
   if (w.usedPct >= 0) {
     int fw = (int)(bw * constrain(w.usedPct, 0.0f, 100.0f) / 100.0f);
     if (fw > 0) canvas.fillRoundRect(bx, y, max(fw, 3), bh, 2, accent);
-    // 百分比
-    canvas.setTextColor(barColor(w.usedPct), C_BG);
+    // 百分比 (整组已变灰时百分比也灰)
+    canvas.setTextColor(accent == C_DIM ? C_DIM : barColor(w.usedPct), C_BG);
     canvas.setTextDatum(TR_DATUM);
     canvas.drawString(String((int)(w.usedPct + 0.5f)) + "%", 154, y + 1);
   } else {
@@ -321,18 +323,25 @@ static void drawBarRow(int y, const char* label, const WindowData& w, uint16_t a
 }
 
 static void drawProvider(int y, const char* name, uint16_t accent, const ProviderData& d) {
+  bool stale = !d.fresh();
+  uint16_t ac = stale ? C_DIM : accent;      // stale: 整组变灰
   canvas.setTextFont(1);
   canvas.setTextDatum(TL_DATUM);
-  canvas.setTextColor(accent, C_BG);
+  canvas.setTextColor(ac, C_BG);
   canvas.drawString(name, 6, y);
-  // 倒计时 (取 5h 窗口)
+  // 右侧: stale 时显示距上次成功多久, 否则显示倒计时
   String cd = fmtCountdown(d.session.resetAt);
-  canvas.setTextColor(C_DIM, C_BG);
+  canvas.setTextColor(stale ? C_WARN : C_DIM, C_BG);
   canvas.setTextDatum(TR_DATUM);
-  if (!d.fresh())            canvas.drawString(d.lastErr.length() ? d.lastErr : "stale", 154, y);
-  else if (cd.length())      canvas.drawString("5h reset " + cd, 154, y);
-  drawBarRow(y + 12, "5H", d.session, accent);
-  drawBarRow(y + 25, "7D", d.weekly,  accent);
+  if (stale) {
+    String msg = d.lastOkMs ? ("stale " + String(d.ageMin()) + "m")
+                            : (d.lastErr.length() ? d.lastErr : "no data");
+    canvas.drawString(msg, 154, y);
+  } else if (cd.length()) {
+    canvas.drawString("5h reset " + cd, 154, y);
+  }
+  drawBarRow(y + 12, "5H", d.session, ac);
+  drawBarRow(y + 25, "7D", d.weekly,  ac);
 }
 
 static void drawScreen() {
@@ -399,7 +408,7 @@ small{color:#777}</style></head><body>
 <label>工作模式</label>
 <select name="mode" style="width:100%;padding:8px;border-radius:6px;border:1px solid #444;background:#1c1c1c;color:#eee">
 <option value="direct">直连模式 — 设备自己拉数据 (需填下方 token)</option>
-<option value="agent">主机 Agent 模式 — 电脑推送 (token 留空, 跑 tools/quota_agent.py)</option>
+<option value="agent">主机 Agent 模式 — 电脑推送 (token 留空)</option>
 </select>
 <label>Claude OAuth Token <small>(终端运行 claude setup-token 获取, sk-ant-oat01-...)</small></label>
 <textarea name="ctok"></textarea>
@@ -409,7 +418,9 @@ small{color:#777}</style></head><body>
 <textarea name="cxrt"></textarea>
 <button type="submit">保存并重启</button>
 </form>
-<p><small>提示: 可用仓库里的 tools/get_tokens.py 一键打印以上三个值。</small></p>
+<p><small>Agent 模式: 到 github.com/mahonzhan/quota-tv/releases 下载对应平台的
+quota-agent 桌面应用, 在电脑上常驻运行即可, 无需在此填 token。<br>
+直连模式: 三个 token 可用仓库 tools/get_tokens.py 一键打印。</small></p>
 </body></html>)html";
 
 static void handleSave() {
@@ -467,6 +478,9 @@ static void startStaServer() {
     }
     applyPush(doc["claude"], claudeData, "claude", 2);
     applyPush(doc["codex"],  codexData,  "codex",  3);
+    // Agent 告知自己的推送间隔(秒) → stale 阈值 = 3x 实际周期
+    long iv = doc["interval"] | 0L;
+    if (iv >= 10 && iv <= 3600) staleAfterMs = (uint32_t)iv * 3000UL;
     firstPollDone = true;
     server.send(200, "application/json", "{\"ok\":true}");
     Serial.println("[push] frame accepted");
