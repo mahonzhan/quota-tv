@@ -1,0 +1,67 @@
+name: Release quota-agent
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: tools/quota-agent
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+            output: quota-agent-windows-amd64.exe
+            ldflags: "-s -w -H windowsgui"
+          - os: macos-latest
+            target: darwin-arm64
+            output: quota-agent-darwin-arm64
+            ldflags: "-s -w"
+          - os: macos-latest
+            target: darwin-amd64
+            output: quota-agent-darwin-amd64
+            ldflags: "-s -w"
+            goarch: amd64
+          - os: ubuntu-latest
+            target: linux-amd64
+            output: quota-agent-linux-amd64
+            ldflags: "-s -w"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: tools/quota-agent/go.sum
+
+      - name: Build
+        env:
+          GOARCH: ${{ matrix.goarch || '' }}
+          CGO_ENABLED: ${{ startsWith(matrix.target, 'darwin') && 1 || 0 }}
+        run: go build -trimpath -ldflags "${{ matrix.ldflags }}" -o ${{ matrix.output }} .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: tools/quota-agent/${{ matrix.output }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
