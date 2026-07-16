@@ -268,8 +268,8 @@ func push(device string, frame pushFrame) error {
 }
 
 // 拉取一次数据, 推送到所有目标 (多设备只探测一次, 不重复消耗)
-// 返回一行状态摘要, 供托盘菜单显示
-func cycle(targets []string) string {
+// 返回状态摘要 (托盘菜单显示) 和本次数据帧 (托盘图标/标题渲染)
+func cycle(targets []string) (string, pushFrame) {
 	frame := pushFrame{Interval: pushIntervalSecs}
 	var status string
 	if p, err := fetchClaude(); err != nil {
@@ -290,7 +290,7 @@ func cycle(targets []string) string {
 	}
 	if frame.Claude == nil && frame.Codex == nil {
 		log.Printf("[push  ] 无数据, 跳过")
-		return status + " (未推送)"
+		return status + " (未推送)", frame
 	}
 	pushOK := true
 	for _, t := range targets {
@@ -304,7 +304,7 @@ func cycle(targets []string) string {
 	if !pushOK {
 		status += " (推送失败)"
 	}
-	return status
+	return status, frame
 }
 
 func deref(f *float64) float64 {
@@ -403,7 +403,7 @@ func main() {
 		for range time.Tick(*interval) {
 			cycle(targets)
 		}
-		return
+			return
 	}
 	runTray(targets, *interval) // 默认: 托盘常驻
 }

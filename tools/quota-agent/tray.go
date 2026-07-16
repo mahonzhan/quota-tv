@@ -5,6 +5,7 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"runtime"
 	"time"
 
@@ -41,9 +42,30 @@ func trayReady(targets []string, interval time.Duration) {
 	mQuit := systray.AddMenuItem("退出", "")
 
 	update := func() {
-		s := cycle(targets)
+		s, frame := cycle(targets)
 		mStatus.SetTitle(s)
 		systray.SetTooltip("QuotaTV Agent — " + s)
+
+		var cs, cw, gs, gw *float64
+		if frame.Claude != nil {
+			cs, cw = frame.Claude.Session, frame.Claude.Weekly
+		}
+		if frame.Codex != nil {
+			gs, gw = frame.Codex.Session, frame.Codex.Weekly
+		}
+		if runtime.GOOS == "darwin" {
+			// macOS: 菜单栏原生文字标题, 显示 5h/7d 已用%
+			systray.SetTitle(fmt.Sprintf("C%s/%s G%s/%s",
+				pctStr(cs), pctStr(cw), pctStr(gs), pctStr(gw)))
+		} else {
+			// Windows/Linux: 数字画进图标 (上橙 Claude 5h, 下白 Codex 5h)
+			p := renderNumberPNG(pctStr(cs), pctStr(gs))
+			if runtime.GOOS == "windows" {
+				systray.SetIcon(pngToICO(p))
+			} else {
+				systray.SetIcon(p)
+			}
+		}
 	}
 
 	go func() {

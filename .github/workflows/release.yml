@@ -47,10 +47,37 @@ jobs:
           CGO_ENABLED: ${{ startsWith(matrix.target, 'darwin') && 1 || 0 }}
         run: go build -trimpath -ldflags "${{ matrix.ldflags }}" -o ${{ matrix.output }} .
 
+      # macOS: 打包 .app bundle — Finder 双击不开终端, LSUIElement 只驻菜单栏不占 Dock
+      - name: Bundle macOS .app
+        if: startsWith(matrix.target, 'darwin')
+        run: |
+          APP="QuotaTV Agent.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp ${{ matrix.output }} "$APP/Contents/MacOS/quota-agent"
+          cp icon.icns "$APP/Contents/Resources/icon.icns"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>QuotaTV Agent</string>
+            <key>CFBundleIdentifier</key><string>com.quotatv.agent</string>
+            <key>CFBundleExecutable</key><string>quota-agent</string>
+            <key>CFBundleIconFile</key><string>icon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>LSUIElement</key><true/>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          codesign --force --deep -s - "$APP"
+          ditto -c -k --keepParent "$APP" quota-agent-${{ matrix.target }}.app.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: tools/quota-agent/${{ matrix.output }}
+          path: |
+            tools/quota-agent/${{ matrix.output }}
+            tools/quota-agent/*.app.zip
 
   release:
     needs: build
