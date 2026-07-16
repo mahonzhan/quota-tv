@@ -10,6 +10,8 @@
 #include <HTTPClient.h>
 #include <WebServer.h>
 #include <DNSServer.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
@@ -22,9 +24,13 @@ TFT_eSprite canvas(&tft);          // 全屏离屏缓冲, 防闪烁 (160x128x2 =
 Preferences prefs;
 WebServer   server(80);
 DNSServer   dns;
+WiFiUDP     udp;                   // UDP 发现响应 (不依赖 mDNS)
+String      devName;               // quotatv-xxxx (MAC 后缀, 全网唯一)
+#define DISCOVERY_PORT 18324
 
 struct Cfg {
   String ssid, pass;
+  String mode;                     // "direct" 直连 (默认) / "agent" 主机推送
   String claudeToken;              // sk-ant-oat01-... (claude setup-token)
   String codexAccess, codexRefresh;
 } cfg;
@@ -353,8 +359,12 @@ static void drawScreen() {
   // 底部状态行
   canvas.setTextDatum(BL_DATUM);
   canvas.setTextColor(C_DIM, C_BG);
-  if (!firstPollDone) canvas.drawString("loading...", 6, 127);
-  else canvas.drawString(WiFi.localIP().toString(), 6, 127);
+  // 底行交替显示设备名和 IP (各 4 秒)
+  bool showName = (millis() / 4000) % 2 == 0;
+  String bottom = showName ? devName : WiFi.localIP().toString();
+  if (cfg.mode == "agent" && !firstPollDone) bottom = devName + " wait push";
+  else if (!firstPollDone) bottom = "loading...";
+  canvas.drawString(bottom, 6, 127);
   canvas.pushSprite(0, 0);
 }
 
@@ -386,6 +396,11 @@ small{color:#777}</style></head><body>
 <form method="POST" action="/save">
 <label>WiFi 名称 (2.4GHz)</label><input name="ssid" required>
 <label>WiFi 密码</label><input name="pass" type="password">
+<label>工作模式</label>
+<select name="mode" style="width:100%;padding:8px;border-radius:6px;border:1px solid #444;background:#1c1c1c;color:#eee">
+<option value="direct">直连模式 — 设备自己拉数据 (需填下方 token)</option>
+<option value="agent">主机 Agent 模式 — 电脑推送 (token 留空, 跑 tools/quota_agent.py)</option>
+</select>
 <label>Claude OAuth Token <small>(终端运行 claude setup-token 获取, sk-ant-oat01-...)</small></label>
 <textarea name="ctok"></textarea>
 <label>Codex Access Token <small>(~/.codex/auth.json 的 tokens.access_token)</small></label>
@@ -401,6 +416,7 @@ static void handleSave() {
   prefs.begin("quotatv", false);
   prefs.putString("ssid",  server.arg("ssid"));
   prefs.putString("pass",  server.arg("pass"));
+  prefs.putString("mode",  server.arg("mode") == "agent" ? "agent" : "direct");
   if (server.arg("ctok").length()) prefs.putString("c_tok", server.arg("ctok"));
   if (server.arg("cxat").length()) prefs.putString("cx_at", server.arg("cxat"));
   if (server.arg("cxrt").length()) prefs.putString("cx_rt", server.arg("cxrt"));
@@ -413,7 +429,7 @@ static void handleSave() {
 
 static void startPortal() {
   portalMode = true;
-  String apName = AP_SSID_PREFIX + String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
+  String apName = devName;
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(AP_IP, AP_IP, IPAddress(255, 255, 255, 0));
   WiFi.softAP(apName.c_str());
@@ -425,8 +441,36 @@ static void startPortal() {
   Serial.printf("[portal] AP %s, http://192.168.4.1\n", apName.c_str());
 }
 
+// Agent 推送: 把 JSON 里的一个 provider 应用到数据结构
+static void applyPush(JsonVariantConst v, ProviderData& d, const char* name, uint8_t beeps) {
+  if (v.isNull()) return;
+  WindowData s = d.session, w = d.weekly;
+  if (v["session"].is<float>())      s.usedPct = v["session"].as<float>();
+  if (v["weekly"].is<float>())       w.usedPct = v["weekly"].as<float>();
+  if (v["sessionReset"].is<long long>()) s.resetAt = (time_t)v["sessionReset"].as<long long>();
+  if (v["weeklyReset"].is<long long>())  w.resetAt = (time_t)v["weeklyReset"].as<long long>();
+  checkReset((String(name) + "-5h").c_str(), d.session, s, beeps);
+  checkReset((String(name) + "-7d").c_str(), d.weekly,  w, beeps);
+  d.session = s; d.weekly = w;
+  d.lastOkMs = millis(); d.lastErr = "";
+}
+
 // STA 模式下的辅助端点
 static void startStaServer() {
+  // 主机 Agent 推送入口:
+  // POST /push {"claude":{"session":62,"weekly":41,"sessionReset":1789e6,"weeklyReset":...},"codex":{...}}
+  server.on("/push", HTTP_POST, []() {
+    JsonDocument doc;
+    if (deserializeJson(doc, server.arg("plain"))) {
+      server.send(400, "application/json", "{\"err\":\"bad json\"}");
+      return;
+    }
+    applyPush(doc["claude"], claudeData, "claude", 2);
+    applyPush(doc["codex"],  codexData,  "codex",  3);
+    firstPollDone = true;
+    server.send(200, "application/json", "{\"ok\":true}");
+    Serial.println("[push] frame accepted");
+  });
   server.on("/", []() {
     String s = "QuotaTV\nclaude 5h=" + String(claudeData.session.usedPct) +
                " 7d=" + String(claudeData.weekly.usedPct) +
@@ -436,6 +480,8 @@ static void startStaServer() {
   });
   server.on("/status", []() {
     JsonDocument doc;
+    doc["name"]              = devName;
+    doc["mode"]              = cfg.mode;
     doc["claude"]["session"] = claudeData.session.usedPct;
     doc["claude"]["weekly"]  = claudeData.weekly.usedPct;
     doc["claude"]["err"]     = claudeData.lastErr;
@@ -445,7 +491,12 @@ static void startStaServer() {
     String out; serializeJson(doc, out);
     server.send(200, "application/json", out);
   });
-  server.on("/reset", HTTP_POST, []() {
+  server.on("/portal", HTTP_POST, []() {      // 重启进配置模式 (保留已有配置)
+    prefs.begin("quotatv", false); prefs.putBool("portal", true); prefs.end();
+    server.send(200, "text/plain", "rebooting into setup mode");
+    delay(400); ESP.restart();
+  });
+  server.on("/reset", HTTP_POST, []() {       // 清空全部配置
     prefs.begin("quotatv", false); prefs.clear(); prefs.end();
     server.send(200, "text/plain", "cleared, rebooting");
     delay(500); ESP.restart();
@@ -460,6 +511,7 @@ static void loadCfg() {
   prefs.begin("quotatv", true);
   cfg.ssid         = prefs.getString("ssid", "");
   cfg.pass         = prefs.getString("pass", "");
+  cfg.mode         = prefs.getString("mode", "direct");
   cfg.claudeToken  = prefs.getString("c_tok", "");
   cfg.codexAccess  = prefs.getString("cx_at", "");
   cfg.codexRefresh = prefs.getString("cx_rt", "");
@@ -470,6 +522,7 @@ void setup() {
   buzzInit();                                  // 最先: 低电平触发, 避免上电长鸣
   Serial.begin(115200);
   pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
+  devName = String("quotatv-") + String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
 
   pinMode(PIN_TFT_BL, OUTPUT);
   analogWrite(PIN_TFT_BL, 200);                // 背光 ~80%
@@ -481,12 +534,14 @@ void setup() {
 
   loadCfg();
 
-  // 开机按住 BOOT 键 1 秒 → 强制配置模式
-  delay(80);
-  bool forcePortal = digitalRead(PIN_BOOT_BTN) == LOW;
-  if (forcePortal) { delay(1000); forcePortal = digitalRead(PIN_BOOT_BTN) == LOW; }
+  // 配置模式触发: 运行中长按 BOOT 3 秒 (写标记后重启), 或 POST /portal
+  // 注意: 不能用"按住 BOOT 上电"—— C3 的 GPIO9 上电为低会进串口下载模式, 固件不运行
+  prefs.begin("quotatv", false);
+  bool portalFlag = prefs.getBool("portal", false);
+  if (portalFlag) prefs.putBool("portal", false);
+  prefs.end();
 
-  if (cfg.ssid.isEmpty() || forcePortal) { startPortal(); return; }
+  if (cfg.ssid.isEmpty() || portalFlag) { startPortal(); return; }
 
   drawMessage("Connecting WiFi", cfg.ssid.c_str());
   WiFi.mode(WIFI_STA);
@@ -494,9 +549,11 @@ void setup() {
   uint32_t t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 30000) delay(200);
   if (WiFi.status() != WL_CONNECTED) {
-    drawMessage("WiFi failed", "hold BOOT & reboot", "to re-configure");
-    delay(15000);
-    ESP.restart();
+    // 连不上 (密码错/换网络) → 直接进配置模式, 不再重启循环
+    drawMessage("WiFi failed", "entering setup...");
+    delay(1500);
+    startPortal();
+    return;
   }
 
   configTzTime(TZ_STRING, NTP_SERVER_1, NTP_SERVER_2);
@@ -504,8 +561,13 @@ void setup() {
   struct tm t;
   getLocalTime(&t, 8000);
 
+  // 唯一主机名注册 mDNS: http://quotatv-xxxx.local (多设备不冲突)
+  if (MDNS.begin(devName.c_str())) MDNS.addService("http", "tcp", 80);
+  udp.begin(DISCOVERY_PORT);                   // UDP 广播发现 (mDNS 不可用时的主路径)
+
   startStaServer();
   beep(1, 60);                                 // 就绪提示
+  if (cfg.mode == "agent") firstPollDone = false;  // 等待 Agent 首帧
   drawScreen();
 }
 
@@ -514,8 +576,23 @@ void loop() {
 
   server.handleClient();
 
+  // UDP 发现: 收到 "QUOTATV_DISCOVER" 即回自己的名字+IP
+  if (udp.parsePacket() > 0) {
+    char buf[40];
+    int n = udp.read(buf, sizeof(buf) - 1);
+    buf[n > 0 ? n : 0] = 0;
+    if (strncmp(buf, "QUOTATV_DISCOVER", 16) == 0) {
+      String r = "{\"name\":\"" + devName + "\",\"ip\":\"" +
+                 WiFi.localIP().toString() + "\",\"mode\":\"" + cfg.mode + "\"}";
+      udp.beginPacket(udp.remoteIP(), udp.remotePort());
+      udp.print(r);
+      udp.endPacket();
+    }
+  }
+
   uint32_t nowMs = millis();
-  if (!firstPollDone || nowMs - lastPollMs >= POLL_INTERVAL_MS) {
+  if (cfg.mode != "agent" &&
+      (!firstPollDone || nowMs - lastPollMs >= POLL_INTERVAL_MS)) {
     lastPollMs = nowMs;
     fetchClaude();
     fetchCodex();
@@ -527,12 +604,24 @@ void loop() {
   static uint32_t lastDraw = 0;
   if (nowMs - lastDraw >= 1000) { lastDraw = nowMs; drawScreen(); }
 
-  // 运行中按 BOOT 键: 立即强制刷新
+  // 运行中 BOOT 键: 短按=立即刷新, 长按 3 秒(蜂鸣)=重启进配置模式
   if (digitalRead(PIN_BOOT_BTN) == LOW) {
-    delay(30);
-    if (digitalRead(PIN_BOOT_BTN) == LOW) {
-      while (digitalRead(PIN_BOOT_BTN) == LOW) delay(10);
-      lastPollMs = 0; firstPollDone = false;
+    uint32_t press = millis();
+    bool longPress = false;
+    while (digitalRead(PIN_BOOT_BTN) == LOW) {
+      if (!longPress && millis() - press >= 3000) {
+        longPress = true;
+        beep(1, 250);                       // 提示: 可以松手了
+      }
+      delay(10);
+    }
+    if (longPress) {
+      prefs.begin("quotatv", false);
+      prefs.putBool("portal", true);
+      prefs.end();
+      ESP.restart();
+    } else if (millis() - press >= 50) {
+      lastPollMs = 0; firstPollDone = false; // 短按强制刷新
     }
   }
   delay(10);

@@ -68,13 +68,48 @@ python tools/get_tokens.py
 
 ## 4. 配置设备
 
-1. 首次上电(或开机按住 BOOT 键 1 秒)进入配置模式,屏幕显示热点名
+1. 首次上电自动进入配置模式;已配置的设备**运行中长按 BOOT 3 秒**(听到一声蜂鸣后松手)或 `curl -X POST http://<设备IP>/portal` 重新进入。注意**不要按住 BOOT 上电**——C3 会进串口下载模式导致黑屏(拔电重插即恢复)
 2. 手机/电脑连接 `QuotaTV-xxxx` 热点,打开 `http://192.168.4.1`
 3. 填 WiFi(2.4GHz)、Claude token、Codex access + refresh token,保存重启
 
 运行后设备每 2 分钟刷新一次;按一下 BOOT 键立即刷新。浏览器访问 `http://<设备IP>/status` 可看 JSON 数据;`POST /reset` 清空配置。
 
-## 5. 数据来源(与风险)
+## 5. 双工作模式
+
+配置页可选两种模式:
+
+**直连模式(默认)**:设备自己调两家接口,不依赖电脑。需在配置页填入 token。
+
+**主机 Agent 模式**:token 不上设备,由电脑上的 `quota-agent`(Go 编写,单二进制零依赖)读取本机 Claude Code / Codex CLI 凭据,拉取额度后经局域网 HTTP 推送到设备(`POST /push`)。Codex token 由 CLI 自动续期,Agent 直接受益。代价是电脑关机后设备显示 stale。
+
+### 设备发现(Agent 模式)
+
+三层机制,按优先级:
+
+1. **UDP 广播发现(主路径,不依赖 mDNS)**:Agent 向 18324 端口广播 `QUOTATV_DISCOVER?`,设备回 `{name, ip, mode}`。同网多台设备各有唯一名 `quotatv-xxxx`(MAC 后缀,屏幕底行与 IP 交替显示):发现多台时用 `-name quotatv-a1b2` 指定,或 `-all` 全部推送(数据只拉一次)
+2. mDNS 兜底:每台设备注册 `quotatv-xxxx.local`
+3. 手动指定:`-device http://192.168.x.x`(AP 隔离等广播不通的网络用这个)
+
+### Agent 编译与运行
+
+```bash
+cd tools/quota-agent
+go build -ldflags "-s -w" -o quota-agent        # 本平台
+GOOS=windows GOARCH=amd64 go build -o quota-agent.exe   # 交叉编译其他平台
+GOOS=darwin  GOARCH=arm64 go build -o quota-agent-mac
+GOOS=linux   GOARCH=amd64 go build -o quota-agent-linux
+
+./quota-agent -once      # 调试: 发现设备并推一次
+./quota-agent            # 常驻: 每 2 分钟推一次
+```
+
+开机自启:
+
+- **Windows**: `schtasks /create /tn QuotaAgent /sc onlogon /tr "C:\path\quota-agent.exe"`
+- **macOS**: `launchd` 用户 LaunchAgent(`~/Library/LaunchAgents/`,RunAtLoad + KeepAlive)
+- **Linux**: systemd user unit(`~/.config/systemd/user/quota-agent.service`,`ExecStart=... Restart=always`,`systemctl --user enable --now quota-agent`)
+
+## 6. 数据来源(与风险)
 
 - **Claude**:发送 `max_tokens=1` 的最小请求,从响应头 `anthropic-ratelimit-unified-5h/7d-utilization`(0~1)和 `-reset`(epoch)读取。每次探测消耗几个 token,量级可忽略。
 - **Codex**:`GET chatgpt.com/backend-api/wham/usage`,零消耗;access token 过期时自动用 refresh token 到 `auth.openai.com` 续期并存入 NVS。
