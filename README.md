@@ -107,7 +107,19 @@ quota-agent -all             # 多设备全部推送
 quota-agent -device http://192.168.1.50   # 广播不通时手动指定
 ```
 
-自己编译:`cd tools/quota-agent && go build -ldflags "-s -w"`(Windows 加 `-H windowsgui` 免黑窗;macOS 需在 mac 上编译,systray 依赖 cgo)。
+自己编译(`cd tools/quota-agent`):
+
+```bash
+# Windows — 必须加 -H windowsgui, 否则 exe 启动会弹黑色控制台窗口
+go build -ldflags "-s -w -H windowsgui" -o quota-agent.exe
+
+# macOS / Linux
+go build -ldflags "-s -w" -o quota-agent
+```
+
+注意:`-H windowsgui` 的 GUI 版没有控制台,`log` 输出不可见;Windows 上调试(看发现/推送日志)时用不带该参数的构建跑 `quota-agent -once`。macOS 版依赖 cgo,需在 mac 上编译(Releases 里的由 CI 的 macos runner 构建)。
+
+exe 文件图标:仓库已提交 `rsrc_windows_amd64.syso`(由 `icon.ico` 经 [akavel/rsrc](https://github.com/akavel/rsrc) 生成),`go build` 自动链接,无需额外操作;改图标时重新生成该文件即可(`go run github.com/akavel/rsrc@latest -ico icon.ico -o rsrc_windows_amd64.syso`)。macOS 裸二进制没有文件图标概念,要图标需打包成 .app bundle(未做,菜单栏图标不受影响)。
 
 ### 发布流程 (维护者)
 

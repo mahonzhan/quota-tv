@@ -165,28 +165,36 @@ func codexToken() (string, error) {
 	return auth.Tokens.AccessToken, nil
 }
 
-type codexWindow struct {
-	UsedPercent     *float64 `json:"used_percent"`
-	ResetsInSeconds *int64   `json:"resets_in_seconds"`
-	ResetsAt        *int64   `json:"resets_at"`
+// 宽容解析: 与固件 parseCodexWindow 同等的字段名/类型兼容性
+type codexWindow map[string]any
+
+func (w codexWindow) num(keys ...string) (float64, bool) {
+	for _, k := range keys {
+		if v, ok := w[k]; ok {
+			if f, ok2 := v.(float64); ok2 { // encoding/json 所有数字都是 float64
+				return f, true
+			}
+		}
+	}
+	return 0, false
 }
 
-func (w *codexWindow) fill(pct **float64, reset **int64) {
+func (w codexWindow) fill(pct **float64, reset **int64) {
 	if w == nil {
 		return
 	}
-	if w.UsedPercent != nil {
-		*pct = w.UsedPercent
+	if f, ok := w.num("used_percent", "usage_percent", "used"); ok {
+		v := f
+		*pct = &v
 	}
-	switch {
-	case w.ResetsAt != nil:
-		t := *w.ResetsAt
+	if f, ok := w.num("resets_at", "reset_at"); ok { // 绝对时间戳
+		t := int64(f)
 		if t > 4102444800 { // 毫秒时间戳兜底
 			t /= 1000
 		}
 		*reset = &t
-	case w.ResetsInSeconds != nil:
-		t := time.Now().Unix() + *w.ResetsInSeconds
+	} else if f, ok := w.num("resets_in_seconds", "reset_after_seconds"); ok { // 相对秒数
+		t := time.Now().Unix() + int64(f)
 		*reset = &t
 	}
 }
@@ -211,21 +219,33 @@ func fetchCodex() (*providerPush, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	var usage struct {
-		RateLimit struct {
-			Primary   *codexWindow `json:"primary_window"`
-			Secondary *codexWindow `json:"secondary_window"`
-		} `json:"rate_limit"`
-	}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err := json.Unmarshal(raw, &usage); err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("JSON 解析失败: %v", err)
 	}
+	rl, _ := doc["rate_limit"].(map[string]any)
+	if rl == nil {
+		rl, _ = doc["rate_limits"].(map[string]any)
+	}
+	var primary, secondary codexWindow
+	if rl != nil {
+		if m, ok := rl["primary_window"].(map[string]any); ok {
+			primary = codexWindow(m)
+		}
+		if m, ok := rl["secondary_window"].(map[string]any); ok {
+			secondary = codexWindow(m)
+		}
+	}
 	p := &providerPush{}
-	usage.RateLimit.Primary.fill(&p.Session, &p.SessionReset)
-	usage.RateLimit.Secondary.fill(&p.Weekly, &p.WeeklyReset)
+	primary.fill(&p.Session, &p.SessionReset)
+	secondary.fill(&p.Weekly, &p.WeeklyReset)
 	if p.Session == nil && p.Weekly == nil {
 		return nil, fmt.Errorf("接口结构变化, 原始响应: %.200s", string(raw))
+	}
+	if p.SessionReset == nil && p.WeeklyReset == nil {
+		// 有百分比但没识别出 reset 字段: 打印窗口原始内容便于排查
+		log.Printf("[codex ] 未识别 reset 字段, primary_window 原始: %v", primary)
 	}
 	return p, nil
 }
