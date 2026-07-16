@@ -96,6 +96,10 @@ python tools/get_tokens.py
 
 双击(或命令行)运行后**驻留系统托盘**(Windows 任务栏 / macOS 菜单栏 / Linux 状态区),托盘菜单提供:最近推送状态、立即推送、**开机自启开关**(写入各平台原生自启机制:注册表 Run / LaunchAgent / autostart desktop)、退出。
 
+托盘直接显示额度:**macOS** 菜单栏图标旁显示文字 `C62/41 G30/71`(Claude/Codex 的 5h/7d 已用%);**Windows/Linux** 托盘不支持文字,数字直接渲染进图标——上行橙色为 Claude 5h、下行白色为 Codex 5h,悬停 tooltip 看完整数据。
+
+**macOS 下载 `.app.zip`**(而非裸二进制):解压后双击即驻留菜单栏,不开终端、不占 Dock。首次打开因未签名会被 Gatekeeper 拦截,右键 → 打开 → 再点打开即可。裸二进制版供命令行/launchd 场景使用。
+
 命令行参数(托盘模式同样生效):
 
 ```bash
