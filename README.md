@@ -1,5 +1,7 @@
 # QuotaTV — Claude + ChatGPT 订阅额度桌面显示器
 
+![](./preview.png)
+
 ESP32-C3 DevKitM-1 + 1.8" ST7735 的复古小电脑,单屏显示 Claude Code 与 ChatGPT(Codex) 的 5h/周额度使用率和重置倒计时,额度重置时蜂鸣提醒。设备直连两家接口,**不需要电脑常驻脚本**。
 
 ```
