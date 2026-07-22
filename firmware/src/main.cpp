@@ -539,7 +539,7 @@ void setup() {
   devName = String("quotatv-") + String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
 
   pinMode(PIN_TFT_BL, OUTPUT);
-  analogWrite(PIN_TFT_BL, 200);                // 背光 ~80%
+  analogWrite(PIN_TFT_BL, 255);                // 背光 100%（最高亮度）
 
   tft.init();
   tft.setRotation(3);                          // 横屏 160x128; 方向反了改成 1
